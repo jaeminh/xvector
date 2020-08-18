@@ -1,6 +1,8 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn import init
 from torch.nn.parameter import Parameter
 
 
@@ -28,18 +30,22 @@ class AttnPooling(nn.Module):
     def __init__(self, din, dh=500, eps=1e-12):
         super(AttnPooling, self).__init__()
         self.eps = eps
-        self.weight1 = Parameter(torch.Tensor(dh, din))
-        self.weight2 = Parameter(torch.Tensor(1, dh))
+        self.w1 = Parameter(torch.Tensor(dh, din))
+        self.w2 = Parameter(torch.Tensor(1, dh))
+        self.reset_parameters()
 
-    def forward(self, x: torch.Tensor, dim) -> torch.Tensor:
+    def reset_parameters(self) -> None:
+        init.kaiming_uniform_(self.w1, a=math.sqrt(5))
+        init.kaiming_uniform_(self.w2, a=math.sqrt(5))
+
+    def forward(self, x, dim):
         # x : (Batch, F_dim, Time)
-        # h : (Batch, Time, F_dim)
-        h = x.transpose(1, 2)
-        attn = F.relu(F.linear(h, self.weight1))
-        attn = F.softmax(F.linear(attn, self.weight2), dim=1)
+        attn = F.relu(F.linear(x.transpose(1, 2).contiguous(), self.w1))
+        attn = F.softmax(F.linear(attn, self.w2), dim=1)
 
         mean = torch.bmm(x, attn)
-        variance = (x - mean).pow(2).mean(dim=dim)
+        variance = (x - mean).pow(2)
+        variance = torch.bmm(variance, attn).squeeze(dim)
         mean = mean.squeeze(dim)
 
         mask = (variance <= self.eps).type(variance.dtype).to(variance.device)
